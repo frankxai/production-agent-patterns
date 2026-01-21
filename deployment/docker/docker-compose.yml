@@ -1,0 +1,145 @@
+# Docker Compose for Local Development
+# Production Agent Patterns - All frameworks in one stack
+
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Core Services
+  # ============================================================================
+
+  # Langfuse for observability (open-source LLM tracing)
+  langfuse:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@postgres:5432/langfuse
+      - NEXTAUTH_SECRET=your-secret-key-change-in-production
+      - NEXTAUTH_URL=http://localhost:3000
+      - SALT=your-salt-change-in-production
+    depends_on:
+      - postgres
+
+  # PostgreSQL for Langfuse and agent state
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # ============================================================================
+  # MCP Servers
+  # ============================================================================
+
+  mcp-template:
+    build:
+      context: ../../mcp-servers/template
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - LOG_LEVEL=INFO
+      - RATE_LIMIT_PER_MINUTE=60
+
+  mcp-database:
+    build:
+      context: ../../mcp-servers/database-connector
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8080"
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@postgres:5432/langfuse
+      - LOG_LEVEL=INFO
+    depends_on:
+      - postgres
+
+  # ============================================================================
+  # Agent Runners (for testing)
+  # ============================================================================
+
+  # OpenAI SDK Agent
+  agent-openai:
+    build:
+      context: ../../agents/research-assistant/openai-sdk
+      dockerfile: Dockerfile
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+    depends_on:
+      - langfuse
+      - mcp-template
+
+  # Claude SDK Agent
+  agent-claude:
+    build:
+      context: ../../agents/research-assistant/claude-sdk
+      dockerfile: Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+    depends_on:
+      - langfuse
+      - mcp-template
+
+  # LangGraph Agent
+  agent-langgraph:
+    build:
+      context: ../../agents/research-assistant/langgraph
+      dockerfile: Dockerfile
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGFUSE_HOST=http://langfuse:3000
+    depends_on:
+      - langfuse
+      - mcp-template
+
+  # ============================================================================
+  # Monitoring Stack
+  # ============================================================================
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../../monitoring/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: agent-network
