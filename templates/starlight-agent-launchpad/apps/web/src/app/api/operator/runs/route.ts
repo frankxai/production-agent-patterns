@@ -1,6 +1,11 @@
 import { runRequestSchema } from "@starlight/launchpad-contracts";
 
-import { callOperator, proxyJson } from "@/lib/operator";
+import {
+  BodyLimitError,
+  callOperator,
+  proxyJson,
+  readBoundedRequestText,
+} from "@/lib/operator";
 import { guardCockpitRequest, unavailableResponse } from "@/lib/route-guards";
 
 export const dynamic = "force-dynamic";
@@ -22,11 +27,19 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const raw = await request.text();
-  if (Buffer.byteLength(raw, "utf8") > MAX_REQUEST_BYTES) {
+  let raw: string;
+  try {
+    raw = await readBoundedRequestText(request, MAX_REQUEST_BYTES);
+  } catch (error) {
+    if (error instanceof BodyLimitError) {
+      return Response.json(
+        { error: "request_too_large" },
+        { status: 413, headers: { "cache-control": "no-store" } },
+      );
+    }
     return Response.json(
-      { error: "request_too_large" },
-      { status: 413, headers: { "cache-control": "no-store" } },
+      { error: "invalid_request_body" },
+      { status: 400, headers: { "cache-control": "no-store" } },
     );
   }
 

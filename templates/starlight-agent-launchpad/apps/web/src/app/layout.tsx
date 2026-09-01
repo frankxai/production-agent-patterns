@@ -9,7 +9,7 @@ export const metadata: Metadata = {
     template: "%s · Starlight Agent Launchpad",
   },
   description:
-    "A secure Vercel cockpit and Railway operator boundary for verified agent workflows.",
+    "An inspectable Vercel cockpit and Railway operator boundary for bounded agent workflows.",
   applicationName: "Starlight Agent Launchpad",
   robots: { index: true, follow: true },
 };

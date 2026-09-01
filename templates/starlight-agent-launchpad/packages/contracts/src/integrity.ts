@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import {
+  RECEIPT_SIGNATURE_ALGORITHM,
   runReceiptSchema,
   type RunReceipt,
   type UnsignedRunReceipt,
@@ -44,21 +45,52 @@ export function sha256Digest(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+export type ReceiptVerificationKeyring = Readonly<Record<string, string>>;
+
+function receiptSignaturePayload(receipt: UnsignedRunReceipt, keyId: string): string {
+  return canonicalJson({
+    algorithm: RECEIPT_SIGNATURE_ALGORITHM,
+    keyId,
+    receipt,
+  });
+}
+
 export function signRunReceipt(
   receipt: UnsignedRunReceipt,
   secret: string,
   keyId: string,
 ): RunReceipt {
-  const value = createHmac("sha256", secret).update(canonicalJson(receipt)).digest("hex");
+  const value = createHmac("sha256", secret)
+    .update(receiptSignaturePayload(receipt, keyId))
+    .digest("hex");
   return runReceiptSchema.parse({
     ...receipt,
-    signature: { algorithm: "hmac-sha256", keyId, value },
+    signature: { algorithm: RECEIPT_SIGNATURE_ALGORITHM, keyId, value },
   });
 }
 
-export function verifyRunReceipt(receipt: RunReceipt, secret: string): boolean {
-  const { signature, ...unsigned } = runReceiptSchema.parse(receipt);
-  const expected = createHmac("sha256", secret).update(canonicalJson(unsigned)).digest();
+export function verifyRunReceipt(
+  receipt: RunReceipt,
+  keyring: ReceiptVerificationKeyring,
+): boolean {
+  const parsed = runReceiptSchema.safeParse(receipt);
+  if (!parsed.success) {
+    return false;
+  }
+
+  const { signature, ...unsigned } = parsed.data;
+  if (!Object.prototype.hasOwnProperty.call(keyring, signature.keyId)) {
+    return false;
+  }
+
+  const secret = keyring[signature.keyId];
+  if (typeof secret !== "string") {
+    return false;
+  }
+
+  const expected = createHmac("sha256", secret)
+    .update(receiptSignaturePayload(unsigned, signature.keyId))
+    .digest();
   const actual = Buffer.from(signature.value, "hex");
   return expected.byteLength === actual.byteLength && timingSafeEqual(expected, actual);
 }

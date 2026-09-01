@@ -8,7 +8,7 @@ interface Entry {
   token: string;
   updatedAt: number;
   workflow: string;
-  inputDigest: string;
+  requestDigest: string;
   receipt?: RunReceipt;
 }
 
@@ -29,19 +29,28 @@ export class MemoryReceiptStore implements ReceiptStore {
     idempotencyKey: string,
     _runId: string,
     workflow: string,
-    inputDigest: string,
+    requestDigest: string,
     leaseMs: number,
   ): Promise<ReservationResult> {
     const existing = this.entries.get(idempotencyKey);
-    if (existing?.receipt) {
-      return { state: "completed", receipt: existing.receipt };
-    }
-    if (existing && Date.now() - existing.updatedAt < leaseMs) {
-      return {
-        state: "pending",
-        workflow: existing.workflow,
-        inputDigest: existing.inputDigest,
-      };
+    if (existing) {
+      if (existing.workflow !== workflow || existing.requestDigest !== requestDigest) {
+        return {
+          state: "conflict",
+          workflow: existing.workflow,
+          requestDigest: existing.requestDigest,
+        };
+      }
+      if (existing.receipt) {
+        return { state: "completed", receipt: existing.receipt };
+      }
+      if (Date.now() - existing.updatedAt < leaseMs) {
+        return {
+          state: "pending",
+          workflow: existing.workflow,
+          requestDigest: existing.requestDigest,
+        };
+      }
     }
 
     const token = randomUUID();
@@ -49,7 +58,7 @@ export class MemoryReceiptStore implements ReceiptStore {
       token,
       updatedAt: Date.now(),
       workflow,
-      inputDigest,
+      requestDigest,
     });
     return { state: "reserved", token };
   }
@@ -63,11 +72,17 @@ export class MemoryReceiptStore implements ReceiptStore {
     if (!existing || existing.token !== reservationToken) {
       throw new Error("The idempotency reservation is no longer owned by this run");
     }
+    if (
+      receipt.workflow !== existing.workflow ||
+      receipt.requestDigest !== existing.requestDigest
+    ) {
+      throw new Error("The receipt does not match its idempotency reservation fingerprint");
+    }
     this.entries.set(idempotencyKey, {
       token: reservationToken,
       updatedAt: Date.now(),
-      workflow: receipt.workflow,
-      inputDigest: receipt.inputDigest,
+      workflow: existing.workflow,
+      requestDigest: existing.requestDigest,
       receipt,
     });
   }

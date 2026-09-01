@@ -54,6 +54,55 @@ describe("operator configuration", () => {
     expect(config.agentRuntimeUrl).toContain(".railway.internal");
   });
 
+  it("rejects loopback HTTP runtime URLs in production", () => {
+    expect(() =>
+      loadConfig({
+        ...baseEnvironment,
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://launchpad:secret@postgres.railway.internal:5432/railway",
+        RUNTIME_ADAPTER: "http",
+        ALLOW_MOCK_RUNTIME: "false",
+        AGENT_RUNTIME_URL: "http://127.0.0.1:4101/v1/runs",
+        AGENT_RUNTIME_API_KEY: "a".repeat(32),
+      }),
+    ).toThrow("AGENT_RUNTIME_URL must use HTTPS or Railway private networking");
+  });
+
+  it("requires an idempotency lease longer than runtime timeout plus safety margin", () => {
+    expect(() =>
+      loadConfig({
+        ...baseEnvironment,
+        RUNTIME_TIMEOUT_MS: "120000",
+        IDEMPOTENCY_LEASE_SECONDS: "150",
+      }),
+    ).toThrow("Idempotency lease must exceed the runtime timeout plus a 30 second safety margin");
+  });
+
+  it("builds a bounded verification keyring for receipt rotation", () => {
+    const oldSecret = "l".repeat(64);
+    const config = loadConfig({
+      ...baseEnvironment,
+      RECEIPT_SIGNING_KEY_ID: "current-v2",
+      RECEIPT_VERIFICATION_KEYS: JSON.stringify({ "legacy-v1": oldSecret }),
+    });
+    expect(config.receiptVerificationKeys).toEqual({
+      "legacy-v1": oldSecret,
+      "current-v2": baseEnvironment.RECEIPT_SIGNING_SECRET,
+    });
+  });
+
+  it("rejects a legacy key that conflicts with the active key ID", () => {
+    expect(() =>
+      loadConfig({
+        ...baseEnvironment,
+        RECEIPT_SIGNING_KEY_ID: "current-v1",
+        RECEIPT_VERIFICATION_KEYS: JSON.stringify({
+          "current-v1": "x".repeat(64),
+        }),
+      }),
+    ).toThrow("RECEIPT_VERIFICATION_KEYS conflicts with the active signing key");
+  });
+
   it("accepts the clean Railway simulation profile after shared secrets resolve", () => {
     const config = loadConfig({
       NODE_ENV: "production",

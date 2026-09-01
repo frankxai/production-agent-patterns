@@ -2,7 +2,7 @@
   "name": "@starlight/agent-launchpad",
   "version": "0.1.0",
   "private": true,
-  "description": "A verified Vercel cockpit and Railway operator boundary for production agent workflows.",
+  "description": "An inspectable Vercel cockpit and Railway operator boundary for bounded agent workflows.",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=24.0.0"

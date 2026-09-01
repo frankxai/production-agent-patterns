@@ -60,7 +60,7 @@ export function LaunchpadConsole() {
     setMessage(
       parsed.data.runtime.adapter === "mock"
         ? "Operator connected. Runs are explicitly simulated."
-        : "Operator and contract-tested runtime connected.",
+        : "HTTP adapter configured. Each run still validates the runtime result contract.",
     );
     return true;
   }

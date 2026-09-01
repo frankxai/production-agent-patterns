@@ -1,8 +1,8 @@
 import {
+  database,
   defineRailway,
   github,
   group,
-  postgres,
   project,
   service,
 } from "railway/iac";
@@ -17,7 +17,10 @@ import {
  */
 export default defineRailway((context) => {
   const production = context.isEnvironment("production");
-  const receipts = postgres("launchpad-receipts");
+  const receipts = database("launchpad-receipts", "postgres", {
+    // Exact major/minor and distro: upgrades are explicit, tested changes.
+    image: "postgres:16.15-bookworm",
+  });
 
   const operator = service("launchpad-operator", {
     source: github("frankxai/production-agent-patterns", {
@@ -36,6 +39,7 @@ export default defineRailway((context) => {
       OPERATOR_API_KEY: context.shared.LAUNCHPAD_OPERATOR_API_KEY,
       RECEIPT_SIGNING_SECRET: context.shared.LAUNCHPAD_RECEIPT_SIGNING_SECRET,
       RECEIPT_SIGNING_KEY_ID: "launchpad-v1",
+      RECEIPT_VERIFICATION_KEYS: "{}",
       RUNTIME_ADAPTER: "mock",
       // The initial deployment is an explicitly labelled simulator. Change the
       // adapter to http after its target passes the shared contract tests.

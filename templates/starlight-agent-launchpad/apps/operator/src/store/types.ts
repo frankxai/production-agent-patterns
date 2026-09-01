@@ -2,8 +2,9 @@ import type { RunReceipt } from "@starlight/launchpad-contracts";
 
 export type ReservationResult =
   | { state: "reserved"; token: string }
-  | { state: "pending"; workflow: string; inputDigest: string }
-  | { state: "completed"; receipt: RunReceipt };
+  | { state: "pending"; workflow: string; requestDigest: string }
+  | { state: "completed"; receipt: RunReceipt }
+  | { state: "conflict"; workflow: string; requestDigest: string };
 
 export interface ReceiptStore {
   readonly kind: "memory" | "postgres";
@@ -14,7 +15,7 @@ export interface ReceiptStore {
     idempotencyKey: string,
     runId: string,
     workflow: string,
-    inputDigest: string,
+    requestDigest: string,
     leaseMs: number,
   ): Promise<ReservationResult>;
   complete(idempotencyKey: string, reservationToken: string, receipt: RunReceipt): Promise<void>;

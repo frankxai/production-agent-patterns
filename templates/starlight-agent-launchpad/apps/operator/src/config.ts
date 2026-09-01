@@ -4,6 +4,15 @@ const booleanFromString = z
   .enum(["true", "false"])
   .transform((value) => value === "true");
 
+const receiptKeyIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const receiptSecretSchema = z.string().min(32);
+const IDEMPOTENCY_LEASE_SAFETY_MS = 30_000;
+
 const environmentSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -12,6 +21,7 @@ const environmentSchema = z
     OPERATOR_API_KEY: z.string().min(32),
     RECEIPT_SIGNING_SECRET: z.string().min(32),
     RECEIPT_SIGNING_KEY_ID: z.string().min(1).max(120).default("launchpad-v1"),
+    RECEIPT_VERIFICATION_KEYS: z.string().default("{}"),
     RUNTIME_ADAPTER: z.enum(["mock", "http"]).default("mock"),
     ALLOW_MOCK_RUNTIME: booleanFromString.default(false),
     AGENT_RUNTIME_URL: z.string().url().optional(),
@@ -58,6 +68,17 @@ const environmentSchema = z
         });
       }
     }
+
+    if (
+      environment.IDEMPOTENCY_LEASE_SECONDS * 1_000 <=
+      environment.RUNTIME_TIMEOUT_MS + IDEMPOTENCY_LEASE_SAFETY_MS
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Idempotency lease must exceed the runtime timeout plus a 30 second safety margin",
+        path: ["IDEMPOTENCY_LEASE_SECONDS"],
+      });
+    }
   });
 
 export type RuntimeAdapterKind = "mock" | "http";
@@ -69,6 +90,7 @@ export interface OperatorConfig {
   operatorApiKey: string;
   receiptSigningSecret: string;
   receiptSigningKeyId: string;
+  receiptVerificationKeys: Readonly<Record<string, string>>;
   runtimeAdapter: RuntimeAdapterKind;
   allowMockRuntime: boolean;
   agentRuntimeUrl?: string;
@@ -91,7 +113,11 @@ function assertRuntimeUrl(rawUrl: string, nodeEnv: OperatorConfig["nodeEnv"]): v
 
   const privateRailway = url.hostname.endsWith(".railway.internal");
   const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && (privateRailway || local))) {
+  const localDevelopment = nodeEnv !== "production" && local;
+  if (
+    url.protocol !== "https:" &&
+    !(url.protocol === "http:" && (privateRailway || localDevelopment))
+  ) {
     throw new Error(
       nodeEnv === "production"
         ? "AGENT_RUNTIME_URL must use HTTPS or Railway private networking"
@@ -100,11 +126,41 @@ function assertRuntimeUrl(rawUrl: string, nodeEnv: OperatorConfig["nodeEnv"]): v
   }
 }
 
+function parseVerificationKeys(
+  raw: string,
+  currentKeyId: string,
+  currentSecret: string,
+): Readonly<Record<string, string>> {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error("RECEIPT_VERIFICATION_KEYS must be a JSON object");
+  }
+
+  const parsed = z.record(receiptKeyIdSchema, receiptSecretSchema).parse(value);
+  if (Object.keys(parsed).length > 10) {
+    throw new Error("RECEIPT_VERIFICATION_KEYS may contain at most 10 legacy keys");
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(parsed, currentKeyId) &&
+    parsed[currentKeyId] !== currentSecret
+  ) {
+    throw new Error("RECEIPT_VERIFICATION_KEYS conflicts with the active signing key");
+  }
+  return Object.freeze({ ...parsed, [currentKeyId]: currentSecret });
+}
+
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): OperatorConfig {
   const parsed = environmentSchema.parse(environment);
   if (parsed.AGENT_RUNTIME_URL) {
     assertRuntimeUrl(parsed.AGENT_RUNTIME_URL, parsed.NODE_ENV);
   }
+  const receiptVerificationKeys = parseVerificationKeys(
+    parsed.RECEIPT_VERIFICATION_KEYS,
+    parsed.RECEIPT_SIGNING_KEY_ID,
+    parsed.RECEIPT_SIGNING_SECRET,
+  );
 
   const workflows = parsed.ALLOWED_WORKFLOWS.split(",")
     .map((workflow) => workflow.trim())
@@ -120,6 +176,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Operat
     operatorApiKey: parsed.OPERATOR_API_KEY,
     receiptSigningSecret: parsed.RECEIPT_SIGNING_SECRET,
     receiptSigningKeyId: parsed.RECEIPT_SIGNING_KEY_ID,
+    receiptVerificationKeys,
     runtimeAdapter: parsed.RUNTIME_ADAPTER,
     allowMockRuntime: parsed.ALLOW_MOCK_RUNTIME,
     ...(parsed.AGENT_RUNTIME_URL ? { agentRuntimeUrl: parsed.AGENT_RUNTIME_URL } : {}),

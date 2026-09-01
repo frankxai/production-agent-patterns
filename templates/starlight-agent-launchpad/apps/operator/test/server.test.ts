@@ -3,15 +3,57 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   RUN_REQUEST_VERSION,
+  RUNTIME_RESULT_VERSION,
   runReceiptSchema,
   type RunReceipt,
+  type RuntimeResult,
 } from "@starlight/launchpad-contracts";
 import { verifyRunReceipt } from "@starlight/launchpad-contracts/integrity";
 
+import type { RuntimeAdapter } from "../src/adapters";
 import type { OperatorConfig } from "../src/config";
 import { buildOperator } from "../src/server";
 import { MemoryReceiptStore } from "../src/store/memory";
 import type { ReceiptStore, ReservationResult } from "../src/store/types";
+
+class BlockingAdapter implements RuntimeAdapter {
+  readonly kind = "mock" as const;
+  readonly mode = "simulation" as const;
+  calls = 0;
+
+  private releaseExecution: ((result: RuntimeResult) => void) | undefined;
+  private signalStarted: (() => void) | undefined;
+  readonly started = new Promise<void>((resolve) => {
+    this.signalStarted = resolve;
+  });
+
+  execute(): Promise<RuntimeResult> {
+    this.calls += 1;
+    this.signalStarted?.();
+    if (this.calls > 1) {
+      return Promise.resolve(this.result());
+    }
+    return new Promise<RuntimeResult>((resolve) => {
+      this.releaseExecution = resolve;
+    });
+  }
+
+  release(): void {
+    if (!this.releaseExecution) {
+      throw new Error("The blocking adapter has not started");
+    }
+    this.releaseExecution(this.result());
+  }
+
+  private result(): RuntimeResult {
+    return {
+      schemaVersion: RUNTIME_RESULT_VERSION,
+      status: "accepted",
+      summary: "The bounded test execution completed.",
+      artifacts: [],
+    };
+  }
+}
 
 class TamperingReceiptStore implements ReceiptStore {
   readonly kind = "memory" as const;
@@ -31,14 +73,14 @@ class TamperingReceiptStore implements ReceiptStore {
     idempotencyKey: string,
     runId: string,
     workflow: string,
-    inputDigest: string,
+    requestDigest: string,
     leaseMs: number,
   ): Promise<ReservationResult> {
     const result = await this.inner.reserve(
       idempotencyKey,
       runId,
       workflow,
-      inputDigest,
+      requestDigest,
       leaseMs,
     );
     if (this.tamper && result.state === "completed") {
@@ -63,7 +105,7 @@ class TamperingReceiptStore implements ReceiptStore {
   private tamperReceipt(receipt: RunReceipt): RunReceipt {
     return runReceiptSchema.parse({
       ...receipt,
-      metrics: { ...receipt.metrics, durationMs: receipt.metrics.durationMs + 1 },
+      signature: { ...receipt.signature, keyId: "attacker-controlled-key" },
     });
   }
 }
@@ -78,11 +120,12 @@ const config: OperatorConfig = {
   operatorApiKey: operatorKey,
   receiptSigningSecret: signingSecret,
   receiptSigningKeyId: "test-v1",
+  receiptVerificationKeys: { "test-v1": signingSecret },
   runtimeAdapter: "mock",
   allowMockRuntime: true,
   runtimeTimeoutMs: 5_000,
   migrateOnStart: false,
-  idempotencyLeaseMs: 30_000,
+  idempotencyLeaseMs: 60_000,
   allowedWorkflows: new Set(["research-brief"]),
   rateLimitMax: 100,
   rateLimitWindow: "1 minute",
@@ -112,6 +155,7 @@ describe("launchpad operator", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-correlation-id"]).toBeTruthy();
     expect(response.json()).toMatchObject({
+      schemaVersion: "starlight.health.v1",
       status: "ok",
       service: "starlight-launchpad-operator",
     });
@@ -162,7 +206,7 @@ describe("launchpad operator", () => {
       mode: "simulation",
       adapter: "mock",
     });
-    expect(verifyRunReceipt(receipt, signingSecret)).toBe(true);
+    expect(verifyRunReceipt(receipt, config.receiptVerificationKeys)).toBe(true);
 
     const replay = await app.inject({
       method: "POST",
@@ -230,7 +274,103 @@ describe("launchpad operator", () => {
     expect(conflict.json()).toMatchObject({ error: "idempotency_key_conflict" });
   });
 
-  it("fails closed when stored receipt content no longer matches its signature", async () => {
+  it("rejects a completed idempotency key reused with different context", async () => {
+    const headers = {
+      authorization: `Bearer ${operatorKey}`,
+      "content-type": "application/json",
+      "idempotency-key": "idem-context-conflict-0001",
+    };
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers,
+      payload: requestBody,
+    });
+    expect(first.statusCode).toBe(201);
+
+    const conflict = await app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers,
+      payload: {
+        ...requestBody,
+        context: { ...requestBody.context, tags: ["different-context"] },
+      },
+    });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toMatchObject({ error: "idempotency_key_conflict" });
+  });
+
+  it("returns run_in_progress for the same pending request without double execution", async () => {
+    await app.close();
+    const adapter = new BlockingAdapter();
+    app = await buildOperator({ config, adapter });
+    const headers = {
+      authorization: `Bearer ${operatorKey}`,
+      "content-type": "application/json",
+      "idempotency-key": "idem-pending-replay-0001",
+    };
+
+    const firstRun = app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers,
+      payload: requestBody,
+    });
+    await adapter.started;
+
+    const pending = await app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers,
+      payload: requestBody,
+    });
+    adapter.release();
+    const completed = await firstRun;
+
+    expect(pending.statusCode).toBe(409);
+    expect(pending.json()).toMatchObject({ error: "run_in_progress" });
+    expect(completed.statusCode).toBe(201);
+    expect(adapter.calls).toBe(1);
+  });
+
+  it("rejects a pending idempotency key reused with different context", async () => {
+    await app.close();
+    const adapter = new BlockingAdapter();
+    app = await buildOperator({ config, adapter });
+    const headers = {
+      authorization: `Bearer ${operatorKey}`,
+      "content-type": "application/json",
+      "idempotency-key": "idem-pending-conflict-0001",
+    };
+
+    const firstRun = app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers,
+      payload: requestBody,
+    });
+    await adapter.started;
+
+    const conflict = await app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers,
+      payload: {
+        ...requestBody,
+        context: { ...requestBody.context, requestedBy: "another-caller" },
+      },
+    });
+    adapter.release();
+    const completed = await firstRun;
+
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toMatchObject({ error: "idempotency_key_conflict" });
+    expect(completed.statusCode).toBe(201);
+    expect(adapter.calls).toBe(1);
+  });
+
+  it("fails closed when a stored receipt signature key ID is tampered", async () => {
     await app.close();
     const store = new TamperingReceiptStore();
     app = await buildOperator({ config, store });
@@ -265,6 +405,52 @@ describe("launchpad operator", () => {
     });
     expect(retrieval.statusCode).toBe(500);
     expect(retrieval.json()).toMatchObject({ error: "receipt_integrity_failure" });
+  });
+
+  it("retrieves a legacy-key receipt after rotating the active signing key", async () => {
+    await app.close();
+    const store = new MemoryReceiptStore();
+    const legacySecret = "l".repeat(64);
+    const legacyKeyId = "legacy-v1";
+    const legacyConfig: OperatorConfig = {
+      ...config,
+      receiptSigningSecret: legacySecret,
+      receiptSigningKeyId: legacyKeyId,
+      receiptVerificationKeys: { [legacyKeyId]: legacySecret },
+    };
+    app = await buildOperator({ config: legacyConfig, store });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/runs",
+      headers: {
+        authorization: `Bearer ${operatorKey}`,
+        "content-type": "application/json",
+        "idempotency-key": "idem-legacy-receipt-0001",
+      },
+      payload: requestBody,
+    });
+    expect(created.statusCode).toBe(201);
+    const legacyReceipt = runReceiptSchema.parse(created.json());
+    expect(legacyReceipt.signature.keyId).toBe(legacyKeyId);
+
+    await app.close();
+    const rotatedConfig: OperatorConfig = {
+      ...config,
+      receiptVerificationKeys: {
+        ...config.receiptVerificationKeys,
+        [legacyKeyId]: legacySecret,
+      },
+    };
+    app = await buildOperator({ config: rotatedConfig, store });
+
+    const found = await app.inject({
+      method: "GET",
+      url: `/v1/receipts/${legacyReceipt.receiptId}`,
+      headers: { authorization: `Bearer ${operatorKey}` },
+    });
+    expect(found.statusCode).toBe(200);
+    expect(found.json()).toEqual(legacyReceipt);
   });
 
   it("rejects unknown workflows before the adapter boundary", async () => {

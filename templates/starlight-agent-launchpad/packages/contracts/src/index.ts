@@ -4,6 +4,8 @@ export const RUN_REQUEST_VERSION = "starlight.run-request.v1" as const;
 export const RUNTIME_REQUEST_VERSION = "starlight.runtime-request.v1" as const;
 export const RUNTIME_RESULT_VERSION = "starlight.runtime-result.v1" as const;
 export const RUN_RECEIPT_VERSION = "starlight.run-receipt.v1" as const;
+export const RECEIPT_SIGNATURE_ALGORITHM = "hmac-sha256" as const;
+export const HEALTH_RESPONSE_VERSION = "starlight.health.v1" as const;
 
 const workflowNameSchema = z
   .string()
@@ -87,6 +89,7 @@ export const unsignedRunReceiptSchema = z
     mode: z.enum(["simulation", "runtime"]),
     adapter: z.enum(["mock", "http"]),
     inputDigest: sha256Schema,
+    requestDigest: sha256Schema,
     result: runtimeResultSchema.optional(),
     failure: z
       .object({
@@ -124,8 +127,13 @@ export const unsignedRunReceiptSchema = z
 
 export const receiptSignatureSchema = z
   .object({
-    algorithm: z.literal("hmac-sha256"),
-    keyId: z.string().trim().min(1).max(120),
+    algorithm: z.literal(RECEIPT_SIGNATURE_ALGORITHM),
+    keyId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
     value: sha256Schema,
   })
   .strict();
@@ -133,6 +141,16 @@ export const receiptSignatureSchema = z
 export const runReceiptSchema = unsignedRunReceiptSchema.and(
   z.object({ signature: receiptSignatureSchema }).strict(),
 );
+
+export const healthResponseSchema = z
+  .object({
+    schemaVersion: z.literal(HEALTH_RESPONSE_VERSION),
+    status: z.enum(["ok", "unavailable"]),
+    service: z.literal("starlight-launchpad-operator"),
+    version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    timestamp: z.string().datetime({ offset: true }),
+  })
+  .strict();
 
 export const architectureResponseSchema = z
   .object({
@@ -163,4 +181,5 @@ export type RuntimeRequest = z.infer<typeof runtimeRequestSchema>;
 export type RuntimeResult = z.infer<typeof runtimeResultSchema>;
 export type UnsignedRunReceipt = z.infer<typeof unsignedRunReceiptSchema>;
 export type RunReceipt = z.infer<typeof runReceiptSchema>;
+export type HealthResponse = z.infer<typeof healthResponseSchema>;
 export type ArchitectureResponse = z.infer<typeof architectureResponseSchema>;

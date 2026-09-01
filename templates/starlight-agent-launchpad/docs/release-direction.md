@@ -5,8 +5,8 @@
 - **Recipient:** an architect who has a working agent workflow but cannot yet prove its deployment boundary.
 - **Job:** expose the operator's real state, submit one bounded run, and inspect the signed receipt.
 - **Promise:** the first screen distinguishes simulation, runtime execution, and durable evidence without revealing infrastructure credentials.
-- **Primary action:** run the verified sample workflow.
-- **Signature proof:** the returned, signed `starlight.run-receipt.v1` record.
+- **Primary action:** run the bounded sample workflow.
+- **Signature evidence:** the returned, signed `starlight.run-receipt.v1` record.
 - **Posture:** a calm instrument panel; the architecture is visible because it is actionable, not decorative.
 
 ## Three directions considered

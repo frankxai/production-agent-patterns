@@ -31,6 +31,24 @@ describe("web proxy configuration", () => {
     ).toThrow("APP_ORIGIN must use HTTPS in production");
   });
 
+  it("rejects loopback HTTP origins in production", () => {
+    expect(() =>
+      loadWebProxyConfig({
+        ...baseEnvironment,
+        NODE_ENV: "production",
+        RAILWAY_API_URL: "http://127.0.0.1:4100",
+      }),
+    ).toThrow("RAILWAY_API_URL must use HTTPS in production");
+
+    expect(() =>
+      loadWebProxyConfig({
+        ...baseEnvironment,
+        NODE_ENV: "production",
+        APP_ORIGIN: "http://localhost:3000",
+      }),
+    ).toThrow("APP_ORIGIN must use HTTPS in production");
+  });
+
   it("rejects operator URL path drift", () => {
     expect(() =>
       loadWebProxyConfig({

@@ -34,7 +34,8 @@ export default function Home() {
             <p className="hero-intro">
               A deployment can return 200 while exposing its runtime key, accepting the same job
               twice, or losing the evidence of what ran. Launchpad separates the public cockpit
-              from the operator, requires idempotency, and returns a signed receipt for every run.
+              from the operator, binds each idempotency key to one validated request, and returns a
+              signed receipt for each completed, rejected, or failed run.
             </p>
             <div className="hero-actions">
               <a className="primary-link" href="#console">
@@ -90,7 +91,7 @@ export default function Home() {
             <article>
               <span>Operator plane</span>
               <h3>Railway speaks to runtimes.</h3>
-              <p>The public API authenticates every control route, restricts workflows, and records one outcome per idempotency key.</p>
+              <p>The public API authenticates every control route, restricts workflows, and binds each idempotency key to one full validated request.</p>
             </article>
             <article>
               <span>Evidence plane</span>
@@ -107,8 +108,8 @@ export default function Home() {
                 are tested.
               </p>
             </div>
-            <a href="https://github.com/frankxai/production-agent-patterns/tree/agent/codex/starlight-agent-launchpad-v1/templates/starlight-agent-launchpad">
-              Inspect candidate source <span aria-hidden="true">↗</span>
+            <a href="https://github.com/frankxai/production-agent-patterns">
+              Open source repository <span aria-hidden="true">↗</span>
             </a>
           </div>
         </section>

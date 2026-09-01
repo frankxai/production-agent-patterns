@@ -6,6 +6,7 @@ import {
   RUN_RECEIPT_VERSION,
   RUNTIME_REQUEST_VERSION,
   architectureResponseSchema,
+  healthResponseSchema,
   runRequestSchema,
   type RuntimeRequest,
   type UnsignedRunReceipt,
@@ -87,6 +88,7 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
                 "operatorApiKey",
                 "agentRuntimeApiKey",
                 "receiptSigningSecret",
+                "receiptVerificationKeys",
                 "databaseUrl",
               ],
               censor: "[redacted]",
@@ -116,12 +118,14 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
 
   app.get("/health", async (_request, reply) => {
     const ready = await store.health();
-    return reply.status(ready ? 200 : 503).send({
+    const payload = healthResponseSchema.parse({
+      schemaVersion: "starlight.health.v1",
       status: ready ? "ok" : "unavailable",
       service: "starlight-launchpad-operator",
       version: "0.1.0",
       timestamp: new Date().toISOString(),
     });
+    return reply.status(ready ? 200 : 503).send(payload);
   });
 
   app.get(
@@ -182,15 +186,22 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
 
       const runId = randomUUID();
       const inputDigest = sha256Digest(parsedRequest.data.input);
+      const requestDigest = sha256Digest(parsedRequest.data);
       const reservation = await store.reserve(
         idempotencyKey,
         runId,
         parsedRequest.data.workflow,
-        inputDigest,
+        requestDigest,
         config.idempotencyLeaseMs,
       );
+      if (reservation.state === "conflict") {
+        return reply.status(409).send({
+          error: "idempotency_key_conflict",
+          correlationId: currentCorrelationId,
+        });
+      }
       if (reservation.state === "completed") {
-        if (!verifyRunReceipt(reservation.receipt, config.receiptSigningSecret)) {
+        if (!verifyRunReceipt(reservation.receipt, config.receiptVerificationKeys)) {
           request.log.error(
             { receiptId: reservation.receipt.receiptId, correlationId: currentCorrelationId },
             "Stored receipt failed signature verification",
@@ -202,7 +213,7 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
         }
         if (
           reservation.receipt.workflow !== parsedRequest.data.workflow ||
-          reservation.receipt.inputDigest !== inputDigest
+          reservation.receipt.requestDigest !== requestDigest
         ) {
           return reply.status(409).send({
             error: "idempotency_key_conflict",
@@ -213,15 +224,6 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
         return reply.send(reservation.receipt);
       }
       if (reservation.state === "pending") {
-        if (
-          reservation.workflow !== parsedRequest.data.workflow ||
-          reservation.inputDigest !== inputDigest
-        ) {
-          return reply.status(409).send({
-            error: "idempotency_key_conflict",
-            correlationId: currentCorrelationId,
-          });
-        }
         return reply.status(409).send({
           error: "run_in_progress",
           correlationId: currentCorrelationId,
@@ -254,6 +256,7 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
           mode: adapter.mode,
           adapter: adapter.kind,
           inputDigest,
+          requestDigest,
           result,
           metrics: {
             durationMs: Math.max(0, completedAt.getTime() - createdAt.getTime()),
@@ -277,6 +280,7 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
           mode: adapter.mode,
           adapter: adapter.kind,
           inputDigest,
+          requestDigest,
           failure: publicFailure(code),
           metrics: { durationMs: Math.max(0, completedAt.getTime() - createdAt.getTime()) },
           createdAt: createdAt.toISOString(),
@@ -314,7 +318,7 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
           correlationId: requestCorrelationId(request),
         });
       }
-      if (!verifyRunReceipt(receipt, config.receiptSigningSecret)) {
+      if (!verifyRunReceipt(receipt, config.receiptVerificationKeys)) {
         request.log.error(
           { receiptId: receipt.receiptId, correlationId: requestCorrelationId(request) },
           "Stored receipt failed signature verification",

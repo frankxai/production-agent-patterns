@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WebProxyConfig } from "../src/lib/config";
-import { callOperator } from "../src/lib/operator";
+import { BodyLimitError, callOperator, readBoundedRequestText } from "../src/lib/operator";
 
 const config: WebProxyConfig = {
   nodeEnv: "test",
@@ -51,5 +51,53 @@ describe("operator server proxy", () => {
     await expect(callOperator(config, "https://attacker.invalid/collect")).rejects.toThrow(
       "outside the allowed surface",
     );
+  });
+
+  it("cancels and aborts a chunked operator response once the byte cap is crossed", async () => {
+    let cancelled = false;
+    let suppliedSignal: AbortSignal | null | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(140_000));
+        controller.enqueue(new Uint8Array(140_000));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        suppliedSignal = init?.signal;
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/json", "transfer-encoding": "chunked" },
+        });
+      }),
+    );
+
+    await expect(callOperator(config, "/health")).rejects.toBeInstanceOf(BodyLimitError);
+    expect(cancelled).toBe(true);
+    expect(suppliedSignal?.aborted).toBe(true);
+  });
+
+  it("cancels an inbound request stream once its byte cap is crossed", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(32));
+        controller.enqueue(new Uint8Array(32));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const request = {
+      body: stream,
+      headers: new Headers({ "transfer-encoding": "chunked" }),
+    } as Request;
+
+    await expect(readBoundedRequestText(request, 48)).rejects.toBeInstanceOf(BodyLimitError);
+    expect(cancelled).toBe(true);
   });
 });
