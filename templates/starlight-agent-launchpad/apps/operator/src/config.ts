@@ -6,10 +6,12 @@ const booleanFromString = z
 
 const receiptKeyIdSchema = z
   .string()
-  .trim()
   .min(1)
   .max(120)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/,
+    "Receipt key IDs must use only letters, numbers, dot, underscore, colon, or hyphen",
+  );
 const receiptSecretSchema = z.string().min(32);
 const IDEMPOTENCY_LEASE_SAFETY_MS = 30_000;
 
@@ -20,7 +22,7 @@ const environmentSchema = z
     PORT: z.coerce.number().int().min(1).max(65_535).default(4_100),
     OPERATOR_API_KEY: z.string().min(32),
     RECEIPT_SIGNING_SECRET: z.string().min(32),
-    RECEIPT_SIGNING_KEY_ID: z.string().min(1).max(120).default("launchpad-v1"),
+    RECEIPT_SIGNING_KEY_ID: receiptKeyIdSchema.default("launchpad-v1"),
     RECEIPT_VERIFICATION_KEYS: z.string().default("{}"),
     RUNTIME_ADAPTER: z.enum(["mock", "http"]).default("mock"),
     ALLOW_MOCK_RUNTIME: booleanFromString.default(false),

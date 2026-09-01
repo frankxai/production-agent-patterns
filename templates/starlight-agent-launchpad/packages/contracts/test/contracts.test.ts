@@ -135,4 +135,13 @@ describe("launchpad contracts", () => {
       }),
     ).toBe(false);
   });
+
+  it.each([" bad-key", "bad key id", "../bad", "bad/key", "bad$key"])(
+    "rejects an unsafe receipt key ID: %s",
+    (keyId) => {
+      expect(() => signRunReceipt(makeUnsignedReceipt(), "s".repeat(64), keyId)).toThrow(
+        "Receipt key IDs must use only",
+      );
+    },
+  );
 });

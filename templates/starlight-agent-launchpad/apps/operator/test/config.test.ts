@@ -103,6 +103,18 @@ describe("operator configuration", () => {
     ).toThrow("RECEIPT_VERIFICATION_KEYS conflicts with the active signing key");
   });
 
+  it.each([" bad-key", "bad key id", "../bad", "bad/key", "bad$key"])(
+    "rejects an unsafe active receipt key ID: %s",
+    (keyId) => {
+      expect(() =>
+        loadConfig({
+          ...baseEnvironment,
+          RECEIPT_SIGNING_KEY_ID: keyId,
+        }),
+      ).toThrow("Receipt key IDs must use only");
+    },
+  );
+
   it("accepts the clean Railway simulation profile after shared secrets resolve", () => {
     const config = loadConfig({
       NODE_ENV: "production",

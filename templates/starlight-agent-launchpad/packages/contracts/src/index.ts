@@ -130,10 +130,12 @@ export const receiptSignatureSchema = z
     algorithm: z.literal(RECEIPT_SIGNATURE_ALGORITHM),
     keyId: z
       .string()
-      .trim()
       .min(1)
       .max(120)
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+      .regex(
+        /^[A-Za-z0-9][A-Za-z0-9._:-]*$/,
+        "Receipt key IDs must use only letters, numbers, dot, underscore, colon, or hyphen",
+      ),
     value: sha256Schema,
   })
   .strict();

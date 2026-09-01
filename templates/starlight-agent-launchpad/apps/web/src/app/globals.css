@@ -5,6 +5,7 @@
   --panel-high: #181f29;
   --paper: #f0ecdf;
   --paper-dim: #a7a89f;
+  --text-muted-aa: #8a8f91;
   --line: rgba(240, 236, 223, 0.13);
   --line-strong: rgba(240, 236, 223, 0.24);
   --signal: #65e8d1;
@@ -473,7 +474,8 @@ textarea:focus {
 
 input::placeholder,
 textarea::placeholder {
-  color: #5f6467;
+  color: var(--text-muted-aa);
+  opacity: 1;
 }
 
 .secondary-button,
@@ -496,7 +498,7 @@ textarea::placeholder {
   justify-content: space-between;
   gap: 16px;
   margin: 18px 0;
-  color: #676c70;
+  color: var(--text-muted-aa);
   font: 9px/1.4 var(--mono);
 }
 
@@ -571,7 +573,7 @@ textarea::placeholder {
 }
 
 .receipt-facts dt {
-  color: #73787b;
+  color: var(--text-muted-aa);
 }
 
 .receipt-facts dd {
@@ -674,7 +676,7 @@ pre {
 .empty-receipt span {
   max-width: 290px;
   margin-top: 10px;
-  color: #74797a;
+  color: var(--text-muted-aa);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -687,7 +689,7 @@ pre {
   margin-top: 30px;
   padding-top: 18px;
   border-top: 1px solid var(--line);
-  color: #767b7d;
+  color: var(--text-muted-aa);
   font: 9px/1 var(--mono);
   text-transform: uppercase;
 }
@@ -804,7 +806,7 @@ pre {
   align-items: center;
   justify-content: space-between;
   border-top: 1px solid var(--line);
-  color: #737773;
+  color: var(--text-muted-aa);
   font: 9px/1 var(--mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
