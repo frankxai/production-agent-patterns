@@ -4,6 +4,7 @@ import { runReceiptSchema, type RunReceipt } from "@starlight/launchpad-contract
 import { Pool, type PoolClient } from "pg";
 
 import type { ReceiptStore, ReservationResult } from "./types";
+import { QUEEN_MIGRATION_SQL } from "../queen/store";
 
 const MIGRATION_LOCK_ID = 2_041_501_731;
 
@@ -68,6 +69,7 @@ const MIGRATIONS = [
         ON launchpad_run_receipts (updated_at DESC);
     `,
   },
+  { version: 2, sql: QUEEN_MIGRATION_SQL },
 ] as const;
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -79,7 +81,7 @@ interface ReceiptRow {
   receipt: unknown | null;
 }
 
-async function runMigrations(client: PoolClient): Promise<void> {
+export async function runMigrations(client: PoolClient): Promise<void> {
   await client.query("BEGIN");
   try {
     await client.query("SELECT pg_advisory_xact_lock($1)", [MIGRATION_LOCK_ID]);
@@ -121,6 +123,7 @@ async function hasLatestSchema(queryable: Pool | PoolClient): Promise<boolean> {
   const result = await queryable.query<{ ready: boolean }>(
     `SELECT
        EXISTS (SELECT 1 FROM launchpad_schema_migrations WHERE version = $1)
+       AND to_regclass('launchpad_queen_records') IS NOT NULL
        AND EXISTS (
          SELECT 1
          FROM information_schema.columns

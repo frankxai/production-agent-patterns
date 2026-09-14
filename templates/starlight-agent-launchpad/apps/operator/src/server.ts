@@ -26,6 +26,8 @@ import { z } from "zod";
 
 import { AdapterFailure, createRuntimeAdapter, type RuntimeAdapter } from "./adapters";
 import type { OperatorConfig } from "./config";
+import { registerQueenRoutes } from "./queen/routes";
+import { MemoryQueenStore, PostgresQueenStore, type QueenStore } from "./queen/store";
 import { bearerToken, correlationId, secureEqual, validIdempotencyKey } from "./security";
 import { createReceiptStore, type ReceiptStore } from "./store";
 
@@ -37,6 +39,7 @@ export interface OperatorDependencies {
   config: OperatorConfig;
   adapter?: RuntimeAdapter;
   store?: ReceiptStore;
+  queenStore?: QueenStore;
 }
 
 function requestCorrelationId(request: FastifyRequest): string {
@@ -70,6 +73,7 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
   const { config } = dependencies;
   const adapter = dependencies.adapter ?? createRuntimeAdapter(config);
   const store = dependencies.store ?? createReceiptStore(config);
+  const queenStore = dependencies.queenStore ?? (config.databaseUrl ? new PostgresQueenStore(config.databaseUrl) : new MemoryQueenStore());
 
   const app = Fastify({
     bodyLimit: 64 * 1024,
@@ -332,7 +336,14 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
     },
   );
 
+  await registerQueenRoutes(app, { config, store: queenStore, receipts: store, authenticate: authenticate(config) });
+
   app.setErrorHandler((error, request, reply) => {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (request.url.startsWith("/v1/queen/") && (statusCode === 400 || statusCode === 413)) {
+      void reply.status(statusCode).send({ error: statusCode === 413 ? "request_too_large" : "invalid_request", correlationId: requestCorrelationId(request) });
+      return;
+    }
     request.log.error({ err: error, correlationId: requestCorrelationId(request) }, "Operator request failed");
     void reply.status(500).send({
       error: "internal_error",
@@ -342,6 +353,7 @@ export async function buildOperator(dependencies: OperatorDependencies): Promise
 
   app.addHook("onClose", async () => {
     await store.close();
+    await queenStore.close();
   });
 
   return app;
