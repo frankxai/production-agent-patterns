@@ -1,0 +1,33 @@
+{
+  "name": "@starlight/agent-launchpad",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An inspectable Vercel cockpit and Railway operator boundary for bounded agent workflows.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build:operator && npm run build:web",
+    "build:operator": "npm run build --workspace @starlight/launchpad-operator",
+    "build:web": "npm run build --workspace @starlight/launchpad-web",
+    "db:migrate": "npm run db:migrate --workspace @starlight/launchpad-operator",
+    "dev:operator": "npm run dev --workspace @starlight/launchpad-operator",
+    "dev:web": "npm run dev --workspace @starlight/launchpad-web",
+    "lint": "npm run lint --workspaces --if-present",
+    "start:operator": "npm run start --workspace @starlight/launchpad-operator",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && npm run typecheck:iac",
+    "typecheck:iac": "tsc --project tsconfig.iac.json --noEmit",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "railway": "3.11.0",
+    "typescript": "7.0.2"
+  }
+}

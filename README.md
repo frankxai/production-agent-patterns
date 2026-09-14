@@ -156,6 +156,12 @@ async def query_database(sql: str) -> dict:
 
 ## 🌐 Deployment
 
+### Starlight Agent Launchpad (Vercel + Railway)
+
+The [Starlight Agent Launchpad](templates/starlight-agent-launchpad/README.md) is the first full-stack blueprint in this repository: a Next.js cockpit on Vercel, an authenticated operator API on Railway, PostgreSQL-backed signed run receipts, and an explicit adapter contract for a separately operated agent runtime.
+
+It is deliberately runtime-neutral. Hermes and n8n are documented adapter targets, not bundled or claimed integrations.
+
 ### AWS (Bedrock + AgentCore)
 
 ```bash
